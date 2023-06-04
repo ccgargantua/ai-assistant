@@ -8,6 +8,8 @@ import pyttsx3                  # For text to speech
 
 PROMPT_LIMIT = 50 # Don't set this too high.
 MAX_WORDS = 400
+TIME_OUT_TIME = 5 # In seconds
+ENERGY_THRESHOLD = 400
 openai.api_key = os.getenv("OPENAI_API_KEY")
 assert(openai.api_key is not None)
 
@@ -33,8 +35,9 @@ def recognize_speech_from_mic(recognizer, microphone):
     # adjust the recognizer sensitivity to ambient noise and record audio
     # from the microphone
     with microphone as source:
+        print("Shell says: Start talking!\n\n")
         recognizer.adjust_for_ambient_noise(source)
-        audio = recognizer.listen(source)
+        audio = recognizer.listen(source, timeout=TIME_OUT_TIME)
 
     # set up the response object
     response = {
@@ -63,18 +66,27 @@ if __name__ == "__main__":
 
     # create recognizer and mic instances
     recognizer = sr.Recognizer()
+    recognizer.dynamic_energy_threshold = False
+    recognizer.energy_threshold = ENERGY_THRESHOLD
     microphone = sr.Microphone()
     engine = pyttsx3.init()
     used_prompts = 0
+    messages = []
 
     while used_prompts <= PROMPT_LIMIT:
         
         response = ""
         
         input("Shell says: Press enter when ready for the next input")
-        print("Shell says: Start talking!\n\n")
-        guess = recognize_speech_from_mic(recognizer, microphone)
-        
+
+        try:
+            guess = recognize_speech_from_mic(recognizer, microphone)
+        except sr.exceptions.WaitTimeoutError:
+            print('Timed out.')
+            engine.say('Timed out. Please try again')
+            engine.runAndWait()
+            continue
+
         if guess["error"]:
             print("ERROR: {}".format(guess["error"]))
             response = "There was an error. See standard out for details."
@@ -86,12 +98,14 @@ if __name__ == "__main__":
             if len(guess["transcription"]) > MAX_WORDS:
                 response = "I'm sorry, you said too much. Please try rewording your prompt to be shorter."
             else:
+                messages.append({"role": "user", "content": guess["transcription"]})
                 used_prompts += 1
-                response = openai.Completion.create(model="text-davinci-003",
-                                                    prompt=guess["transcription"],
+                response = openai.ChatCompletion.create(model="gpt-3.5-turbo",
+                                                    messages=messages,
                                                     temperature=0,
-                                                    max_tokens=MAX_WORDS*4)["choices"][0]["text"]
+                                                    max_tokens=MAX_WORDS*4)["choices"][0]["message"]["content"]
         
         print('AI said: "{}"\n\n'.format(response.strip()))
         engine.say(response)
         engine.runAndWait()
+        messages.append({"role": "assistant", "content": response})
